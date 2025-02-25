@@ -28,7 +28,8 @@ const scheduleSchema = new mongoose.Schema({
     phone: String,
     message: String,
     time: Date,
-    fcmToken: String
+    fcmToken: String,
+    allDays: Boolean
 });
 const Schedule = mongoose.model("Schedule", scheduleSchema);
 
@@ -42,37 +43,54 @@ let scheduledJobs = {};
 
 // Endpoint to schedule a message
 app.post("/schedule", async (req, res) => {
-    const { phone, message, time, fcmToken } = req.body;
+    const { phone, message, time, fcmToken, allDays } = req.body;
 
     if (!phone || !message || !time || !fcmToken) {
         return res.status(400).json({ message: "Missing required fields" });
     }
 
     try {
-        // Save schedule to MongoDB
-        const newSchedule = new Schedule({ phone, message, time, fcmToken });
+        // Save to MongoDB
+        const newSchedule = new Schedule({ phone, message, time, fcmToken, allDays });
         await newSchedule.save();
 
-        // Schedule the job
         const jobId = newSchedule._id.toString();
         const jobTime = new Date(time);
 
-        scheduledJobs[jobId] = schedule.scheduleJob(jobTime, async () => {
-            const notification = {
-                data: { phone, message },
-                token: fcmToken
-            };
+        if (allDays) {
+            // Schedule a daily job
+            scheduledJobs[jobId] = schedule.scheduleJob({ hour: jobTime.getHours(), minute: jobTime.getMinutes() }, async () => {
+                const notification = {
+                    data: { phone, message },
+                    token: fcmToken
+                };
 
-            try {
-                await admin.messaging().send(notification);
-                console.log(`Notification sent to ${phone}`);
-                await Schedule.findByIdAndDelete(jobId); // Remove from database after execution
-            } catch (error) {
-                console.error("Error sending notification:", error);
-            }
+                try {
+                    await admin.messaging().send(notification);
+                    console.log(`Daily Notification sent to ${phone}`);
+                } catch (error) {
+                    console.error("Error sending notification:", error);
+                }
+            });
+        } else {
+            // Schedule a one-time job
+            scheduledJobs[jobId] = schedule.scheduleJob(jobTime, async () => {
+                const notification = {
+                    data: { phone, message },
+                    token: fcmToken
+                };
 
-            delete scheduledJobs[jobId];
-        });
+                try {
+                    await admin.messaging().send(notification);
+                    console.log(`Notification sent to ${phone}`);
+                    await Schedule.findByIdAndDelete(jobId); // Remove from DB after execution
+                } catch (error) {
+                    console.error("Error sending notification:", error);
+                }
+
+                delete scheduledJobs[jobId];
+            });
+        }
 
         res.json({ message: "Message scheduled successfully!" });
     } catch (error) {
