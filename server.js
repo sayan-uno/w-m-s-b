@@ -8,7 +8,7 @@ app.use(express.json());
 
 // Enable CORS for your frontend origin
 app.use(cors({
-    origin: "https://5500-sayanuno-whatsappmessag-1g02sjldxzj.ws-us118.gitpod.io", // Your frontend URL
+    origin: "https://5500-sayanuno-whatsappmessag-yigfteta2q1.ws-us118.gitpod.io", // Your frontend URL
     methods: ["GET", "POST"], // Allow these methods
     allowedHeaders: ["Content-Type"] // Allow this header
 }));
