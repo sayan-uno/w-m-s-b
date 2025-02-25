@@ -1,7 +1,8 @@
 const express = require("express");
 const schedule = require("node-schedule");
 const admin = require("firebase-admin");
-const cors = require("cors"); // Add this
+const mongoose = require("mongoose");
+const cors = require("cors");
 const app = express();
 
 app.use(express.json());
@@ -9,44 +10,78 @@ app.use(express.json());
 // Enable CORS for your frontend origin
 app.use(cors({
     origin: "https://5500-sayanuno-whatsappmessag-yigfteta2q1.ws-us118.gitpod.io", // Your frontend URL
-    methods: ["GET", "POST"], // Allow these methods
-    allowedHeaders: ["Content-Type"] // Allow this header
+    methods: ["GET", "POST"],
+    allowedHeaders: ["Content-Type"]
 }));
 
+// MongoDB Connection
+const mongoURI = "mongodb+srv://doluipriya866:W2JY6fAlpCtgy6xS@cluster0.sz2rx.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0";
+mongoose.connect(mongoURI, {
+    useNewUrlParser: true,
+    useUnifiedTopology: true
+})
+.then(() => console.log("MongoDB connected"))
+.catch(err => console.error("MongoDB connection error:", err));
+
+// Define Mongoose Schema and Model
+const scheduleSchema = new mongoose.Schema({
+    phone: String,
+    message: String,
+    time: Date,
+    fcmToken: String
+});
+const Schedule = mongoose.model("Schedule", scheduleSchema);
+
 // Initialize Firebase Admin
-const serviceAccount = require("./serviceAccountKey.json"); // Path to your downloaded JSON
+const serviceAccount = require("./serviceAccountKey.json"); // Ensure this file is present in your backend
 admin.initializeApp({
     credential: admin.credential.cert(serviceAccount)
 });
 
 let scheduledJobs = {};
 
-app.post("/schedule", (req, res) => {
+// Endpoint to schedule a message
+app.post("/schedule", async (req, res) => {
     const { phone, message, time, fcmToken } = req.body;
 
     if (!phone || !message || !time || !fcmToken) {
         return res.status(400).json({ message: "Missing required fields" });
     }
 
-    const jobId = Date.now().toString();
-    const jobTime = new Date(time);
+    try {
+        // Save schedule to MongoDB
+        const newSchedule = new Schedule({ phone, message, time, fcmToken });
+        await newSchedule.save();
 
-    scheduledJobs[jobId] = schedule.scheduleJob(jobTime, () => {
-        const notification = {
-            data: { phone, message }, // Send phone and message as data
-            token: fcmToken
-        };
+        // Schedule the job
+        const jobId = newSchedule._id.toString();
+        const jobTime = new Date(time);
 
-        admin.messaging().send(notification)
-            .then(() => console.log(`Notification sent to ${phone}`))
-            .catch(error => console.error("Error sending notification:", error));
+        scheduledJobs[jobId] = schedule.scheduleJob(jobTime, async () => {
+            const notification = {
+                data: { phone, message },
+                token: fcmToken
+            };
 
-        delete scheduledJobs[jobId];
-    });
+            try {
+                await admin.messaging().send(notification);
+                console.log(`Notification sent to ${phone}`);
+                await Schedule.findByIdAndDelete(jobId); // Remove from database after execution
+            } catch (error) {
+                console.error("Error sending notification:", error);
+            }
 
-    res.json({ message: "Message scheduled successfully!" });
+            delete scheduledJobs[jobId];
+        });
+
+        res.json({ message: "Message scheduled successfully!" });
+    } catch (error) {
+        console.error("Error saving schedule:", error);
+        res.status(500).json({ message: "Internal Server Error" });
+    }
 });
 
+// Start Server
 app.listen(3000, () => {
     console.log("Server running on port 3000");
 });
