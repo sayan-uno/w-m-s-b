@@ -1,4 +1,5 @@
 const express = require("express");
+const nodeSchedule = require("node-schedule");
 const schedule = require("node-schedule");
 const admin = require("firebase-admin");
 const mongoose = require("mongoose");
@@ -42,6 +43,51 @@ admin.initializeApp({
 });
 
 let scheduledJobs = {};
+
+async function restoreScheduledJobs() {
+    try {
+        const schedules = await Schedule.find(); // Fetch all schedules from MongoDB
+        schedules.forEach(schedule => {
+            const jobId = schedule._id.toString();
+            const jobTime = new Date(schedule.time);
+            const { phone, message, fcmToken, allDays } = schedule;
+
+            if (jobTime > new Date()) { // Only schedule future messages
+                if (allDays) {
+                    // Recreate daily jobs
+                    scheduledJobs[jobId] = nodeSchedule.scheduleJob({ hour: jobTime.getHours(), minute: jobTime.getMinutes() }, async () => {
+                        sendNotification(phone, message, fcmToken);
+                    });
+                } else {
+                    // Recreate one-time jobs
+                    scheduledJobs[jobId] = nodeSchedule.scheduleJob(jobTime, async () => {
+                        sendNotification(phone, message, fcmToken);
+                        await Schedule.findByIdAndDelete(jobId); // Remove from DB after execution
+                        delete scheduledJobs[jobId];
+                    });
+                }
+            }
+        });
+        console.log("✅ Scheduled jobs restored from MongoDB.");
+    } catch (error) {
+        console.error("Error restoring scheduled jobs:", error);
+    }
+}
+
+// Helper function to send Firebase Notification
+async function sendNotification(phone, message, fcmToken) {
+    const notification = {
+        data: { phone, message },
+        token: fcmToken
+    };
+
+    try {
+        await admin.messaging().send(notification);
+        console.log(`Notification sent to ${phone}`);
+    } catch (error) {
+        console.error("Error sending notification:", error);
+    }
+}
 
 // Endpoint to schedule a message
 app.post("/schedule", async (req, res) => {
@@ -154,6 +200,7 @@ app.delete("/schedule/:id", async (req, res) => {
 });
 
 // Start Server
-app.listen(3000, () => {
+app.listen(3000, async () => {
     console.log("Server running on port 3000");
+    await restoreScheduledJobs(); // Load jobs when server starts
 });
